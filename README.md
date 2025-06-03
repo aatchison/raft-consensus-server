@@ -2,6 +2,8 @@
 
 A complete implementation of the Raft consensus algorithm in Python, providing distributed consensus for replicated state machines with a web-based monitoring interface.
 
+> **Author**: This implementation was created by OpenHands AI Assistant as an educational and production-ready example of the Raft consensus algorithm.
+
 ## 🎯 Overview
 
 This implementation includes:

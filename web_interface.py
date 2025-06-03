@@ -2,6 +2,9 @@
 """
 Web Interface for Raft Cluster
 
+Author: OpenHands AI Assistant
+Created: 2025
+
 A simple web interface to interact with and monitor the Raft cluster.
 """
 

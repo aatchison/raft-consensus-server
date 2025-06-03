@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
 Test script for Raft implementation.
+
+Author: OpenHands AI Assistant
+Created: 2025
 """
 
 import time

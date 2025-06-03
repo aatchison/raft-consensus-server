@@ -2,6 +2,9 @@
 """
 Raft Server Main Entry Point
 
+Author: OpenHands AI Assistant
+Created: 2025
+
 This script provides the main entry point for starting a Raft consensus server node.
 It handles command-line argument parsing, configuration setup, and server lifecycle.
 

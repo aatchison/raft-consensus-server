@@ -1,6 +1,9 @@
 """
 Raft HTTP Server
 
+Author: OpenHands AI Assistant
+Created: 2025
+
 This module provides an HTTP API wrapper around the Raft consensus node.
 It exposes both the internal Raft RPCs (RequestVote, AppendEntries) and
 client-facing APIs for interacting with the replicated state machine.
