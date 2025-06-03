@@ -1,3 +1,18 @@
+"""
+Raft Consensus Algorithm Implementation
+
+This module implements the core Raft consensus algorithm as described in the paper
+"In Search of an Understandable Consensus Algorithm" by Diego Ongaro and John Ousterhout.
+
+The Raft algorithm provides a way for a cluster of servers to agree on a sequence of
+state machine commands, ensuring consistency even in the presence of failures.
+
+Key components:
+- Leader Election: Ensures exactly one leader at a time
+- Log Replication: Leader replicates log entries to followers
+- Safety: Ensures committed entries are never lost
+"""
+
 import asyncio
 import random
 import time
@@ -12,6 +27,13 @@ from config import RaftConfig, NodeConfig
 
 
 class NodeState(Enum):
+    """
+    Possible states for a Raft node.
+    
+    FOLLOWER: Default state, receives entries from leader
+    CANDIDATE: Transitional state during leader election
+    LEADER: Handles client requests and replicates log entries
+    """
     FOLLOWER = "follower"
     CANDIDATE = "candidate"
     LEADER = "leader"
@@ -19,83 +41,140 @@ class NodeState(Enum):
 
 @dataclass
 class RequestVoteRequest:
-    term: int
-    candidate_id: str
-    last_log_index: int
-    last_log_term: int
+    """
+    RequestVote RPC request structure.
+    
+    Sent by candidates during leader election to request votes from other nodes.
+    """
+    term: int              # Candidate's current term
+    candidate_id: str      # ID of the candidate requesting vote
+    last_log_index: int    # Index of candidate's last log entry
+    last_log_term: int     # Term of candidate's last log entry
 
 
 @dataclass
 class RequestVoteResponse:
-    term: int
-    vote_granted: bool
+    """
+    RequestVote RPC response structure.
+    
+    Response to a vote request indicating whether the vote was granted.
+    """
+    term: int              # Current term, for candidate to update itself
+    vote_granted: bool     # True if candidate received vote
 
 
 @dataclass
 class AppendEntriesRequest:
-    term: int
-    leader_id: str
-    prev_log_index: int
-    prev_log_term: int
-    entries: List[LogEntry]
-    leader_commit: int
+    """
+    AppendEntries RPC request structure.
+    
+    Sent by leader to replicate log entries and provide heartbeat.
+    """
+    term: int                    # Leader's current term
+    leader_id: str              # Leader's ID for followers to redirect clients
+    prev_log_index: int         # Index of log entry immediately preceding new ones
+    prev_log_term: int          # Term of prev_log_index entry
+    entries: List[LogEntry]     # Log entries to store (empty for heartbeat)
+    leader_commit: int          # Leader's commit index
 
 
 @dataclass
 class AppendEntriesResponse:
-    term: int
-    success: bool
-    match_index: int = 0
+    """
+    AppendEntries RPC response structure.
+    
+    Response indicating success/failure of log replication.
+    """
+    term: int              # Current term, for leader to update itself
+    success: bool          # True if follower contained entry matching prev_log_index and prev_log_term
+    match_index: int = 0   # Index of highest log entry known to be replicated
 
 
 class RaftNode:
-    """Implementation of a Raft consensus node."""
+    """
+    Implementation of a Raft consensus node.
+    
+    This class implements the complete Raft consensus algorithm including:
+    - Leader election with randomized timeouts
+    - Log replication with consistency guarantees
+    - State machine application of committed entries
+    - RPC handling for RequestVote and AppendEntries
+    
+    The node maintains both persistent state (survives restarts) and volatile state
+    (lost on restart), following the Raft specification.
+    """
     
     def __init__(self, config: RaftConfig):
+        """
+        Initialize a new Raft node.
+        
+        Args:
+            config: Configuration containing node ID, cluster information, and timing parameters
+        """
         self.config = config
         self.node_id = config.node_id
         
-        # Persistent state
-        self.current_term = 0
-        self.voted_for: Optional[str] = None
-        self.log = RaftLog()
+        # Persistent state on all servers (updated on stable storage before responding to RPCs)
+        self.current_term = 0                    # Latest term server has seen (initialized to 0)
+        self.voted_for: Optional[str] = None     # CandidateId that received vote in current term
+        self.log = RaftLog()                     # Log entries; each entry contains command and term
         
-        # Volatile state
-        self.commit_index = 0
-        self.last_applied = 0
-        self.state = NodeState.FOLLOWER
+        # Volatile state on all servers
+        self.commit_index = 0                    # Index of highest log entry known to be committed
+        self.last_applied = 0                    # Index of highest log entry applied to state machine
+        self.state = NodeState.FOLLOWER         # Current node state (follower, candidate, or leader)
         
-        # Leader state
-        self.next_index: Dict[str, int] = {}
-        self.match_index: Dict[str, int] = {}
+        # Volatile state on leaders (reinitialized after election)
+        self.next_index: Dict[str, int] = {}     # For each server, index of next log entry to send
+        self.match_index: Dict[str, int] = {}    # For each server, index of highest log entry known to be replicated
         
-        # Timing
-        self.last_heartbeat = time.time()
-        self.election_timeout = self._random_election_timeout()
+        # Timing and election management
+        self.last_heartbeat = time.time()        # Timestamp of last received heartbeat/vote grant
+        self.election_timeout = self._random_election_timeout()  # Randomized election timeout
         
-        # Tasks
-        self.election_task: Optional[asyncio.Task] = None
-        self.heartbeat_task: Optional[asyncio.Task] = None
+        # Async task management
+        self.election_task: Optional[asyncio.Task] = None    # Task for election timeout monitoring
+        self.heartbeat_task: Optional[asyncio.Task] = None   # Task for sending heartbeats (leader only)
         
-        # State machine (simple key-value store for demo)
+        # State machine (simple key-value store for demonstration)
+        # In production, this would be replaced with the actual application state machine
         self.state_machine: Dict[str, Any] = {}
         
+        # Logging for debugging and monitoring
         self.logger = logging.getLogger(f"raft.{self.node_id}")
         
     def _random_election_timeout(self) -> float:
-        """Generate a random election timeout."""
+        """
+        Generate a randomized election timeout.
+        
+        Randomization prevents split votes by ensuring nodes don't start elections
+        simultaneously. The timeout is chosen randomly from the configured range.
+        
+        Returns:
+            Random timeout value in seconds
+        """
         return random.uniform(
             self.config.election_timeout_min / 1000.0,
             self.config.election_timeout_max / 1000.0
         )
     
     async def start(self):
-        """Start the Raft node."""
+        """
+        Start the Raft node and begin election timeout monitoring.
+        
+        This initializes the node as a follower and starts the election timer
+        that will trigger leader election if no heartbeats are received.
+        """
         self.logger.info(f"Starting Raft node {self.node_id}")
         self.election_task = asyncio.create_task(self._election_timer())
         
     async def stop(self):
-        """Stop the Raft node."""
+        """
+        Stop the Raft node and cancel all running tasks.
+        
+        This gracefully shuts down the node by cancelling the election timer
+        and heartbeat tasks if they are running.
+        """
         self.logger.info(f"Stopping Raft node {self.node_id}")
         if self.election_task:
             self.election_task.cancel()
@@ -103,16 +182,27 @@ class RaftNode:
             self.heartbeat_task.cancel()
     
     async def _election_timer(self):
-        """Election timeout timer."""
+        """
+        Monitor election timeout and trigger elections when necessary.
+        
+        This runs continuously and checks if enough time has passed since the last
+        heartbeat. If the election timeout expires and the node is not a leader,
+        it starts a new election.
+        
+        The timer uses a small sleep interval for responsiveness while avoiding
+        excessive CPU usage.
+        """
         while True:
             try:
-                await asyncio.sleep(0.01)  # Check every 10ms
+                await asyncio.sleep(0.01)  # Check every 10ms for responsiveness
                 
+                # Leaders don't participate in elections
                 if self.state == NodeState.LEADER:
                     continue
                     
+                # Check if election timeout has expired
                 if time.time() - self.last_heartbeat > self.election_timeout:
-                    self.logger.info(f"Election timeout, starting election")
+                    self.logger.info(f"Election timeout expired, starting election")
                     await self._start_election()
                     
             except asyncio.CancelledError:
@@ -121,41 +211,57 @@ class RaftNode:
                 self.logger.error(f"Error in election timer: {e}")
     
     async def _start_election(self):
-        """Start a new election."""
+        """
+        Start a new leader election.
+        
+        This implements the leader election algorithm:
+        1. Increment current term
+        2. Vote for self
+        3. Reset election timer
+        4. Send RequestVote RPCs to all other servers
+        5. If majority of votes received, become leader
+        6. Otherwise, remain follower
+        
+        The election process is designed to ensure at most one leader per term.
+        """
+        # Transition to candidate state and increment term
         self.state = NodeState.CANDIDATE
         self.current_term += 1
-        self.voted_for = self.node_id
+        self.voted_for = self.node_id  # Vote for ourselves
         self.last_heartbeat = time.time()
         self.election_timeout = self._random_election_timeout()
         
         self.logger.info(f"Starting election for term {self.current_term}")
         
-        # Vote for self
+        # Start with our own vote
         votes = 1
         total_nodes = len(self.config.cluster_nodes)
         
-        # Request votes from other nodes
+        # Send RequestVote RPCs to all other nodes in parallel
         vote_tasks = []
         for node in self.config.get_other_nodes():
             task = asyncio.create_task(self._request_vote(node))
             vote_tasks.append(task)
         
-        # Wait for vote responses
+        # Wait for all vote responses (with timeout handling)
         if vote_tasks:
             responses = await asyncio.gather(*vote_tasks, return_exceptions=True)
             
+            # Process each response
             for response in responses:
                 if isinstance(response, RequestVoteResponse):
+                    # If we discover a higher term, step down immediately
                     if response.term > self.current_term:
                         await self._become_follower(response.term)
                         return
                     elif response.vote_granted:
                         votes += 1
         
-        # Check if we won the election
+        # Check if we won the election (majority of votes)
         if votes > total_nodes // 2:
             await self._become_leader()
         else:
+            # Election failed, remain as follower
             await self._become_follower(self.current_term)
     
     async def _request_vote(self, node: NodeConfig) -> Optional[RequestVoteResponse]:
@@ -330,57 +436,95 @@ class RaftNode:
         except Exception as e:
             self.logger.error(f"Error applying entry to state machine: {e}")
     
-    # RPC Handlers
+    # RPC Handlers - These implement the core Raft RPC protocols
     
     async def handle_request_vote(self, request: RequestVoteRequest) -> RequestVoteResponse:
-        """Handle RequestVote RPC."""
-        # Update term if necessary
+        """
+        Handle RequestVote RPC from candidates.
+        
+        This implements the RequestVote RPC receiver logic:
+        1. Reply false if term < currentTerm
+        2. If votedFor is null or candidateId, and candidate's log is at least
+           as up-to-date as receiver's log, grant vote
+        
+        Args:
+            request: RequestVote RPC request containing candidate information
+            
+        Returns:
+            RequestVoteResponse indicating whether vote was granted
+        """
+        # If candidate's term is higher, update our term and become follower
         if request.term > self.current_term:
             await self._become_follower(request.term)
         
         vote_granted = False
         
+        # Grant vote if:
+        # 1. Request is for current term
+        # 2. We haven't voted yet OR we already voted for this candidate
+        # 3. Candidate's log is at least as up-to-date as ours
         if (request.term == self.current_term and 
             (self.voted_for is None or self.voted_for == request.candidate_id) and
             self._is_log_up_to_date(request.last_log_index, request.last_log_term)):
             
             self.voted_for = request.candidate_id
-            self.last_heartbeat = time.time()
+            self.last_heartbeat = time.time()  # Reset election timer
             vote_granted = True
             self.logger.info(f"Granted vote to {request.candidate_id} for term {request.term}")
+        else:
+            self.logger.info(f"Denied vote to {request.candidate_id} for term {request.term}")
         
         return RequestVoteResponse(term=self.current_term, vote_granted=vote_granted)
     
     async def handle_append_entries(self, request: AppendEntriesRequest) -> AppendEntriesResponse:
-        """Handle AppendEntries RPC."""
-        # Update term if necessary
+        """
+        Handle AppendEntries RPC from leader.
+        
+        This implements the AppendEntries RPC receiver logic:
+        1. Reply false if term < currentTerm
+        2. Reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
+        3. If an existing entry conflicts with a new one, delete the existing entry and all that follow it
+        4. Append any new entries not already in the log
+        5. If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+        
+        Args:
+            request: AppendEntries RPC request containing log entries and metadata
+            
+        Returns:
+            AppendEntriesResponse indicating success/failure and match index
+        """
+        # If leader's term is higher, update our term and become follower
         if request.term > self.current_term:
             await self._become_follower(request.term)
         
         success = False
         match_index = 0
         
+        # Only process if request is for current term
         if request.term == self.current_term:
-            self.last_heartbeat = time.time()
+            self.last_heartbeat = time.time()  # Reset election timer (heartbeat received)
             
-            # Check if we can append entries
-            if (request.prev_log_index == 0 or 
+            # Check log consistency: verify that we have the previous log entry
+            # This ensures log consistency across the cluster
+            if (request.prev_log_index == 0 or  # First entry (no previous)
                 (request.prev_log_index <= self.log.last_log_index() and
                  self.log.get_term_at_index(request.prev_log_index) == request.prev_log_term)):
                 
                 success = True
                 
-                # Remove conflicting entries
+                # If there are new entries to append
                 if request.entries:
+                    # Remove any conflicting entries (safety property)
                     self.log.truncate_from(request.prev_log_index + 1)
                     
-                    # Append new entries
+                    # Append new entries to log
                     for entry in request.entries:
                         self.log.append(entry)
                 
+                # Calculate the index of the last entry we now have
                 match_index = request.prev_log_index + len(request.entries)
                 
-                # Update commit index
+                # Update commit index if leader has committed more entries
                 if request.leader_commit > self.commit_index:
                     self.commit_index = min(request.leader_commit, self.log.last_log_index())
                     await self._apply_committed_entries()
@@ -392,24 +536,56 @@ class RaftNode:
         )
     
     def _is_log_up_to_date(self, last_log_index: int, last_log_term: int) -> bool:
-        """Check if the candidate's log is at least as up-to-date as ours."""
+        """
+        Check if the candidate's log is at least as up-to-date as ours.
+        
+        This implements the log comparison logic for voting:
+        - If the logs have last entries with different terms, then the log with
+          the later term is more up-to-date
+        - If the logs end with the same term, then whichever log is longer is
+          more up-to-date
+        
+        Args:
+            last_log_index: Index of candidate's last log entry
+            last_log_term: Term of candidate's last log entry
+            
+        Returns:
+            True if candidate's log is at least as up-to-date as ours
+        """
         our_last_term = self.log.last_log_term()
         our_last_index = self.log.last_log_index()
         
+        # Candidate's log is more up-to-date if it has a higher last term
         if last_log_term > our_last_term:
             return True
+        # If terms are equal, candidate's log is more up-to-date if it's longer
         elif last_log_term == our_last_term:
             return last_log_index >= our_last_index
+        # Candidate's log is less up-to-date if it has a lower last term
         else:
             return False
     
-    # Client operations
+    # Client Operations - These provide the interface for client interactions
     
     async def append_entry(self, command: Any, client_id: str = None) -> bool:
-        """Append a new entry to the log (leader only)."""
+        """
+        Append a new entry to the log (leader only).
+        
+        This is the main interface for clients to submit commands to the Raft cluster.
+        Only the leader can accept new entries. Followers will reject this operation.
+        
+        Args:
+            command: The command to be replicated across the cluster
+            client_id: Optional identifier for the client making the request
+            
+        Returns:
+            True if entry was successfully appended (leader only), False otherwise
+        """
+        # Only leaders can accept new entries
         if self.state != NodeState.LEADER:
             return False
         
+        # Create new log entry with current term and next index
         entry = LogEntry(
             term=self.current_term,
             index=self.log.last_log_index() + 1,
@@ -417,17 +593,37 @@ class RaftNode:
             client_id=client_id
         )
         
+        # Append to our log (will be replicated to followers via heartbeats)
         self.log.append(entry)
         self.logger.info(f"Appended entry {entry.index}: {command}")
         
         return True
     
     def get_state_machine_value(self, key: str) -> Any:
-        """Get a value from the state machine."""
+        """
+        Get a value from the state machine.
+        
+        This provides read access to the replicated state machine.
+        In this implementation, the state machine is a simple key-value store.
+        
+        Args:
+            key: The key to look up in the state machine
+            
+        Returns:
+            The value associated with the key, or None if not found
+        """
         return self.state_machine.get(key)
     
     def get_status(self) -> Dict[str, Any]:
-        """Get the current status of the node."""
+        """
+        Get the current status of the node.
+        
+        This provides a comprehensive view of the node's current state,
+        useful for monitoring and debugging.
+        
+        Returns:
+            Dictionary containing node status information
+        """
         return {
             'node_id': self.node_id,
             'state': self.state.value,

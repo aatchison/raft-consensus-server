@@ -2,7 +2,25 @@
 """
 Raft Client
 
-A simple client to interact with the Raft cluster.
+This module provides a client library for interacting with a Raft cluster.
+It handles leader discovery, request routing, and provides a simple interface
+for key-value operations on the replicated state machine.
+
+Key features:
+- Automatic leader discovery and caching
+- Transparent request routing to the current leader
+- Retry logic for handling leader changes
+- Support for all CRUD operations (GET, SET, DELETE)
+- Cluster status monitoring and health checks
+
+The client abstracts away the complexity of the Raft protocol and provides
+a simple interface that automatically handles leader elections and failover.
+
+Usage:
+    client = RaftClient(['localhost:12000', 'localhost:12001', 'localhost:12002'])
+    client.set('key1', 'value1')
+    value = client.get('key1')
+    client.delete('key1')
 """
 
 import requests
@@ -13,10 +31,21 @@ from typing import Optional, Dict, Any
 
 
 class RaftClient:
-    """Client for interacting with a Raft cluster."""
+    """
+    Client for interacting with a Raft cluster.
+    
+    This client provides a high-level interface for interacting with a Raft
+    cluster. It automatically discovers the current leader and routes requests
+    appropriately, handling leader changes and network failures gracefully.
+    """
     
     def __init__(self, nodes: list[str]):
-        """Initialize with a list of node addresses."""
+        """
+        Initialize the client with a list of cluster nodes.
+        
+        Args:
+            nodes: List of node addresses in format "host:port"
+        """
         self.nodes = nodes
         self.current_leader: Optional[str] = None
     
