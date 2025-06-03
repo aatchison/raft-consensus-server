@@ -1,3 +1,21 @@
+"""
+Raft HTTP Server
+
+This module provides an HTTP API wrapper around the Raft consensus node.
+It exposes both the internal Raft RPCs (RequestVote, AppendEntries) and
+client-facing APIs for interacting with the replicated state machine.
+
+Key features:
+- RESTful API for client operations (GET, SET, DELETE)
+- Internal Raft RPC endpoints for cluster communication
+- Real-time status monitoring and cluster health
+- CORS support for web-based clients
+- Automatic request routing to leader nodes
+
+The server provides a simple key-value store interface backed by the
+Raft consensus algorithm, ensuring strong consistency across the cluster.
+"""
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
