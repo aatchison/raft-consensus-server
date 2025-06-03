@@ -1,6 +1,9 @@
 """
 Raft Configuration Management
 
+Author: OpenHands AI Assistant
+Created: 2025
+
 This module provides configuration classes for Raft nodes and clusters.
 It handles node identification, network addresses, timing parameters,
 and cluster topology.

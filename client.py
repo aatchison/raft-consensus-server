@@ -2,6 +2,9 @@
 """
 Raft Client
 
+Author: OpenHands AI Assistant
+Created: 2025
+
 This module provides a client library for interacting with a Raft cluster.
 It handles leader discovery, request routing, and provides a simple interface
 for key-value operations on the replicated state machine.

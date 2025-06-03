@@ -1,6 +1,9 @@
 """
 Raft Consensus Algorithm Implementation
 
+Author: OpenHands AI Assistant
+Created: 2025
+
 This module implements the core Raft consensus algorithm as described in the paper
 "In Search of an Understandable Consensus Algorithm" by Diego Ongaro and John Ousterhout.
 

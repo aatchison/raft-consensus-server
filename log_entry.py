@@ -1,6 +1,9 @@
 """
 Raft Log Entry Management
 
+Author: OpenHands AI Assistant
+Created: 2025
+
 This module defines the data structures and operations for managing log entries
 in the Raft consensus algorithm. The log is the core data structure that ensures
 consistency across the cluster.
